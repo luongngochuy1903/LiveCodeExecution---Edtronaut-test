@@ -102,7 +102,7 @@ When the user clicks Run, the client calls `POST /code-sessions/{session_id}/run
 1. Validates the session is `ACTIVE` and has non-empty source code.
 2. Checks a rate limit: no more than 10 execution requests per session per minute.
 3. Creates a `CodeExecution` record with `status = QUEUED` and persists it.
-4. Registers a `TransactionSynchronization.afterCommit()` callback that pushes the `execution_id` to the Redis queue once the database transaction successfully commits.
+4. Registers a callback that pushes the `execution_id` to the Redis queue once the database transaction successfully commits.
 
 The key design decision here is that the Redis push happens **after** the database commit, not inside the transaction. This prevents a race condition where the worker picks up the job from Redis before the database record is visible, which would result in a "not found" error.
 
@@ -132,11 +132,12 @@ The `ExecutionWorker` runs in a separate Spring Boot process (the `ces-worker` c
 2. Updates `status = RUNNING`, sets `started_at = now()`.
 3. Calls `ProcessSandboxExecutor.execute()`, which writes the source code to a temp file, then invokes `docker run` with strict isolation flags.
 4. Reads stdout and stderr concurrently using two threads to prevent output buffer deadlock.
-5. Waits up to `timeoutSeconds + 5` seconds for the process to finish.
-6. Maps the result to a terminal status (`COMPLETED`, `TIMEOUT`, or re-queues on transient failure).
-7. Saves the final state, stdout, stderr, exit code, and `execution_time_ms` to the database.
+5. Maps the result to a terminal status (`COMPLETED`, `TIMEOUT`, or re-queues on transient failure).
+6. Saves the final state, stdout, stderr, exit code, and `execution_time_ms` to the database.
 
-The sandbox container is created with the following isolation constraints:
+#### Time limit, memory limit and isolated
+To protect our worker node from mallicious and dangerous scripts from typing input.
+The sandbox container is created with the following isolation constraints (demo, could be change at anytime). We limit memory used to 64MB, maximum of CPU core and isolate container so that there is no system-call scripts could be executed.
 
 | Flag | Purpose |
 |------|---------|
@@ -146,9 +147,12 @@ The sandbox container is created with the following isolation constraints:
 | `--cpus 0.5` | Half a CPU core maximum |
 | `--pids-limit 64` | Prevent fork bombs |
 | `--read-only` | Immutable root filesystem |
-| `--tmpfs /tmp:size=32m,noexec` | Writable but non-executable temp space |
-| `--user nobody` | Non-root execution |
-| `--security-opt no-new-privileges` | Block privilege escalation |
+
+<img width="688" height="715" alt="image" src="https://github.com/user-attachments/assets/1de04243-4d65-4bcf-be3a-b13d454a41d0" />
+
+**SIGTERM**  — tín hiệu yêu cầu process hãy dừng lại.
+**SIGKILL** - Tuy nhiên script user có thể bắt được SIGTERM và bỏ qua, thế nên ta thêm SIGKILL để bắt kernel dừng ngay
+Sau khi chương trình thực thi, container bị hủy ngay lập tức
 
 #### Result Polling
 
@@ -169,6 +173,7 @@ This design was chosen deliberately over message brokers (Kafka, RabbitMQ) for t
 The worker does not use blocking `BLPOP`. Instead, it uses a `@Scheduled` method with a 500ms fixed delay. This is slightly less efficient than blocking pop (wastes one poll cycle when the queue is empty) but is simpler to reason about and integrates cleanly with Spring's scheduling model.
 
 An important constraint of this design: **the job payload in Redis is only the `execution_id`**, not the full job data. The actual source code, language, and metadata are stored in PostgreSQL and fetched by the worker at processing time. This keeps Redis entries small and ensures the database is always the source of truth. If Redis is flushed, jobs that were in-flight can be recovered by scanning for `QUEUED` records in the database.
+
 <img width="899" height="502" alt="queue" src="https://github.com/user-attachments/assets/adf7d9de-729e-48b6-9542-e015ed58e6c8" />
 
 ---
@@ -213,15 +218,13 @@ State transitions are always persisted to the database before the next action. A
 | `FAILED` | Execution failed after exhausting all retries, or an unrecoverable error occurred | Yes |
 | `TIMEOUT` | Execution exceeded the 10-second time limit | Yes |
 
-`COMPLETED` does **not** mean the user's code was correct — it means the execution infrastructure ran the code successfully and captured its output. A Python `SyntaxError` produces `COMPLETED` with a non-zero `exit_code` and the error message in `stderr`.
-
 ---
 
 ### Idempotency Handling
 
 #### Prevent duplicate execution runs
 
-Each call to `POST /code-sessions/{id}/run` creates a **new** `CodeExecution` record with a fresh UUID. There is no deduplication based on code content — if the user clicks Run twice, two executions are created and both run. However, a rate limit of 10 executions per session per minute prevents abuse.
+Each call to `POST /code-sessions/{id}/run` creates a new `CodeExecution` record with a fresh UUID. There is no deduplication based on code content — if the user clicks Run twice, two executions are created and both run. However, a rate limit of 10 executions per session per minute prevents abuse.
 
 The Redis push only happens once per execution record, inside the `afterCommit()` callback. If the transaction rolls back (e.g. a constraint violation), the push never occurs and no orphaned job exists in Redis.
 
@@ -238,14 +241,8 @@ When a worker retries a failed job, it re-queues the same `execution_id` with an
 
 #### Retries
 
-Retries apply only to **worker-level failures** — exceptions thrown by the Java process itself (Docker daemon unreachable, temp file write error, unexpected crash). They do not apply to:
-
-- User code that exits with a non-zero code → `COMPLETED` with `exit_code != 0`
-- Timeouts → `TIMEOUT`
-- OOM kills → `COMPLETED` with `exit_code = 137`
-
+Retries apply only to **worker-level failures** — exceptions thrown by the Java process itself (Docker daemon unreachable, temp file write error, unexpected crash).
 The retry logic is in `ExecutionWorker.handleFailure()`:
-
 ```
 retry_count < max_retries (3)
     → increment retry_count
@@ -271,19 +268,8 @@ A `FAILED` execution has the following fields populated:
 A `TIMEOUT` execution has:
 
 - `status = TIMEOUT`
-- `stderr` contains a timeout message with elapsed time
+- `stderr` contains a timeout message
 - `execution_time_ms` reflects actual elapsed time
-
-#### Dead-letter or failed execution handling
-
-There is no dedicated dead-letter queue in the current design. Executions that exhaust retries are marked `FAILED` in the database and remain there indefinitely. They can be:
-
-- Queried by the client via `GET /executions/{id}`
-- Inspected directly in PostgreSQL for debugging
-- Re-submitted by the user by clicking Run again (which creates a new execution)
-
-There is no automatic dead-letter reprocessing. If a failure is caused by a transient infrastructure problem (e.g. Docker daemon was temporarily down), the operator must either re-submit manually or write a one-off SQL update to re-queue affected records.
-
 ---
 
 ## Trade-offs
@@ -292,12 +278,10 @@ There is no automatic dead-letter reprocessing. If a failure is caused by a tran
 
 | Component | Choice | Why |
 |-----------|--------|-----|
-| **API framework** | Spring Boot | Mature ecosystem, JPA/transaction management, `@Scheduled`, Swagger via springdoc — everything needed in one dependency set |
+| **API framework** | Spring Boot | JPA/transaction management, `@Scheduled`, Everything is integrated with Spring framework, which include every tech stack used in this project |
 | **Database** | PostgreSQL | Strong transactional guarantees needed for the `afterCommit()` pattern. `QUEUED` records serve as a durable fallback if Redis is flushed |
-| **Queue** | Redis List | Zero additional infrastructure. Sufficient for single-worker throughput. LPOP is atomic — no double-processing risk |
-| **Sandbox** | Docker-in-Docker | Strongest isolation achievable without kernel changes. Each run gets a fresh container with hard resource limits. No language runtime needed in the worker image |
-| **Execution timeout** | `timeout` command + Java `waitFor` | Two independent layers. `timeout` kills the user process, `waitFor` kills the Docker process. Belt and suspenders |
-| **Stream reading** | Two threads (stdout + stderr) | Single-threaded reading blocks when one buffer fills. Concurrent reads prevent deadlock for programs with large mixed output |
+| **Queue** | Redis List | popular infrastructure for storing key-value object. Sufficient for one worker throughput. LPOP is atomic — no double-processing risk |
+| **Sandbox** | Docker-in-Docker | Easy way to build without implementing any external tools. Each run gets a fresh container. No language runtime needed in the worker image and easily edited in code |
 
 ### What You Optimized For
 
