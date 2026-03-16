@@ -292,18 +292,11 @@ A `TIMEOUT` execution has:
 **Isolation over speed.** Spinning up a Docker container per execution adds 500ms–2000ms overhead compared to running code in a pre-warmed process pool. This is a deliberate trade: full container isolation is worth the cold-start cost for untrusted user code.
 
 ### Production Readiness Gaps
-
-The following gaps exist in the current implementation and would need to be addressed before a production deployment serving real users:
-
 | Gap | Risk | Mitigation |
 |-----|------|-----------|
-| **Stuck RUNNING jobs** | A worker crash between `RUNNING` and `COMPLETED` leaves the record stuck indefinitely | Add a watchdog query: any execution in `RUNNING` for longer than `timeout + buffer` seconds is auto-transitioned to `FAILED` |
+| **Stuck RUNNING jobs** | A worker crash between `RUNNING` and `COMPLETED` leaves the record stuck indefinitely | Add a watchdog query: any execution in `RUNNING` for longer than period of time is auto-transitioned to `FAILED` |
 | **Single worker** | One worker processes one job at a time. A burst of submissions creates a queue backlog | Run multiple worker replicas. Redis `LPOP` is atomic — multiple workers can safely pop from the same list |
-| **No authentication** | Any client can create sessions and submit code | Add Spring Security with JWT or session-based auth. Scope sessions to authenticated users |
-| **No CSRF on backend** | Spring Security CSRF is not enabled in the current config | Enable `CsrfTokenRepository` with cookie-based token. Frontend is already wired to send `X-XSRF-TOKEN` |
 | **Docker socket exposure** | Mounting `/var/run/docker.sock` gives the worker root-equivalent access to the host | Run Docker daemon in rootless mode, or use a dedicated container runtime socket with restricted permissions |
-| **No image caching guarantee** | If `python:3.12-slim` is not cached, first execution is slow | Pre-pull images in the worker entrypoint (already implemented) and pin image digests to prevent silent updates |
-| **Unbounded session storage** | Sessions and executions accumulate in the database forever | Add a TTL-based cleanup job: close `ACTIVE` sessions older than N hours, archive or delete old execution records |
-| **No output streaming** | The client polls for the full result only after execution completes | Add WebSocket or SSE support to stream stdout in real time, line by line |
+| **No image caching guarantee** | `python:3.12-slim` is not cached, first execution is slow | Pre-pull images in the worker entrypoint (already implemented) and pin image digests to prevent silent updates |
+| **Unbounded session storage** | Sessions and executions accumulate in the database forever | Add a TTL-based cleanup job: Archive or delete old execution records |
 | **Hardcoded limits** | `timeout=10s`, `memory=64m`, `max-retries=3` are global | Make limits configurable per session or per language, stored in the session record |
-| **No metrics or alerting** | Queue depth, worker lag, and execution error rates are not observable | Expose Micrometer metrics: queue depth gauge, execution duration histogram, error rate counter. Wire to Prometheus + Grafana |
