@@ -47,52 +47,10 @@ The system is designed around three core principles:
 ---
 
 ## Diagram
+- *Sequence Diagram*
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  Client (React)                                                 │
-│  • Creates session on load                                      │
-│  • Autosaves every 12s                                          │
-│  • Polls GET /executions/{id} for result                        │
-└────────────────────┬────────────────────────────────────────────┘
-                     │ HTTP REST
-                     ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  REST API  (Spring Boot :8080)                                  │
-│  • CodeSessionController  → CodeSessionService                  │
-│  • CodeExecutionController → CodeExecutionService               │
-│  • Swagger UI at /swagger-ui.html                               │
-└──────────────┬──────────────────────────────────────────────────┘
-               │ afterCommit() → LPUSH
-               ▼
-┌──────────────────────────┐
-│  Redis  (queue)          │
-│  Key: execution:queue    │
-│  Type: List (LPUSH/LPOP) │
-└──────────────┬───────────┘
-               │ LPOP every 500ms
-               ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  Execution Worker  (Spring Boot :8081)                          │
-│  • @Scheduled polls Redis                                       │
-│  • Reads source code from PostgreSQL                            │
-│  • Calls ProcessSandboxExecutor                                 │
-└──────────────┬──────────────────────────────────────────────────┘
-               │ docker run
-               ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  Docker Sandbox  (ephemeral container per execution)            │
-│  --rm --network none --memory 64m --read-only --user nobody     │
-│  python:3.12-slim  timeout 10 python3 -u /sandbox/main.py      │
-└──────────────┬──────────────────────────────────────────────────┘
-               │ stdout / stderr / exit code
-               ▼
-┌──────────────────────────┐
-│  PostgreSQL              │
-│  code_sessions           │
-│  code_executions         │
-└──────────────────────────┘
-```
+<img width="1809" height="2144" alt="business_sequence" src="https://github.com/user-attachments/assets/299c2061-cf99-426a-b2ae-d355857fd787" />
+
 
 ---
 
@@ -211,6 +169,7 @@ This design was chosen deliberately over message brokers (Kafka, RabbitMQ) for t
 The worker does not use blocking `BLPOP`. Instead, it uses a `@Scheduled` method with a 500ms fixed delay. This is slightly less efficient than blocking pop (wastes one poll cycle when the queue is empty) but is simpler to reason about and integrates cleanly with Spring's scheduling model.
 
 An important constraint of this design: **the job payload in Redis is only the `execution_id`**, not the full job data. The actual source code, language, and metadata are stored in PostgreSQL and fetched by the worker at processing time. This keeps Redis entries small and ensures the database is always the source of truth. If Redis is flushed, jobs that were in-flight can be recovered by scanning for `QUEUED` records in the database.
+<img width="899" height="502" alt="queue" src="https://github.com/user-attachments/assets/adf7d9de-729e-48b6-9542-e015ed58e6c8" />
 
 ---
 
