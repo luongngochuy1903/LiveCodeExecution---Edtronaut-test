@@ -1,0 +1,54 @@
+### IntelliJ IDEA ###
+.idea/
+*.iml
+*.iws
+out/
+
+# Sonarlint / other IntelliJ plugins
+.idea/sonarlint/
+.idea/**/workspace.xml
+.idea/**/tasks.xml
+.idea/**/usage.statistics.xml
+.idea/**/dictionaries
+.idea/**/shelf/
+
+### Gradle ###
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+gradle-app.setting
+
+### Logs ###
+logs/
+*.log
+
+### OS ###
+.DS_Store
+Thumbs.db
+
+### Java ###
+*.class
+*.jar
+*.war
+*.ear
+
+### Spring Boot ###
+# File do Spring Boot tạo khi run
+*.pid
+*.hprof
+
+### Test Reports ###
+/test-results/
+/reports/
+
+### Temporary files ###
+*.tmp
+*.swp
+*.swo
+
+### VSCode (nếu dùng thêm) ###
+.vscode/
+
+.env
+
+node_modules/
