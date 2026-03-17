@@ -2,6 +2,7 @@
 Building and implementing logic structure and concept of real - time code execution in an isolated and controlled environment
 
 # Code Execution System
+<img width="1431" height="941" alt="architecture (1)" src="https://github.com/user-attachments/assets/d377cfa7-ce38-4121-ac79-1d3bb338c462" />
 
 ## Table of Contents
 
