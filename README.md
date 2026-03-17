@@ -47,6 +47,77 @@ The system is designed around three core principles:
 
 ---
 
+## Database Design
+
+### Schema
+
+Two tables only — intentionally minimal.
+<img width="551" height="420" alt="class_diagram" src="https://github.com/user-attachments/assets/bbee1904-7d08-4467-9e6d-6dc5d8f21a5f" />
+
+**`code_sessions`**
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | UUID PK | Session identifier |
+| `language` | ENUM | PYTHON, JAVASCRIPT |
+| `source_code` | TEXT | Current code (updated on autosave) |
+| `template_code` | TEXT | Initial template, never changes |
+| `status` | ENUM | ACTIVE, CLOSED |
+| `created_at` | TIMESTAMP | Session creation time |
+| `updated_at` | TIMESTAMP | Last autosave time |
+
+**`code_executions`**
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | UUID PK | Execution identifier |
+| `session_id` | UUID FK | Reference to code_sessions |
+| `language` | ENUM | Snapshot of language at submit time |
+| `source_code` | TEXT | Snapshot of code at submit time |
+| `status` | ENUM | QUEUED, RUNNING, COMPLETED, FAILED, TIMEOUT |
+| `stdout` | TEXT | Captured standard output (max 64KB) |
+| `stderr` | TEXT | Captured standard error (max 16KB) |
+| `exit_code` | INT | Process exit code (0=success, 124=timeout, 137=OOM) |
+| `execution_time_ms` | BIGINT | Wall clock duration |
+| `retry_count` | INT | Number of worker retries attempted |
+| `queued_at` | TIMESTAMP | When pushed to Redis queue |
+| `started_at` | TIMESTAMP | When worker picked up the job |
+| `completed_at` | TIMESTAMP | When execution reached terminal state |
+| `created_at` | TIMESTAMP | Record creation time |
+| `updated_at` | TIMESTAMP | Last status update time |
+
+### Design decisions
+
+**code_sessions**
+
+Represents an active coding session for a user. Tracks the live state of the code in real time. The session lifecycle begins when the user opens the editor and ends when the session is closed.  
+
+**code_executions**
+
+Represents a single code execution attempt. Each time the user clicks Run, a new record is created. This table is the communication layer between the API and the Worker along with the full job lifecycle from QUEUED to COMPLETED OR ERROR state.
+
+**Why `source_code` is stored in both tables**
+
+`code_sessions.source_code` is the live code — updated on every autosave. `code_executions.source_code` is a snapshot taken at submit time and never changes. This ensures the worker always executes the exact version the user submitted, even if the user continues editing after clicking Run.
+
+**Why stdout/stderr are stored in the database**
+
+Simplicity — no external object storage dependency. The 64KB/16KB truncation limits prevent the table from growing unbounded. A production system would store output in S3 and keep only the URL in the database.
+
+**Why UUIDs instead of auto-increment IDs**
+
+UUIDs are safe to expose in URLs and API responses without leaking sequential information about how many sessions or executions exist.
+
+**DB as the communication layer between API and Worker**
+
+API and Worker never talk directly. The database is the only shared state:
+- API writes a `QUEUED` record → pushes execution ID to Redis
+- Worker reads source code from DB → updates status as it progresses
+- API reads final status/output from DB → returns to client
+
+This means if either service restarts mid-execution, no data is lost.
+---
+
 ## Diagram
 - *Sequence Diagram*
 
@@ -151,9 +222,8 @@ The sandbox container is created with the following isolation constraints (demo,
 
 <img width="688" height="715" alt="image" src="https://github.com/user-attachments/assets/1de04243-4d65-4bcf-be3a-b13d454a41d0" />
 
-**SIGTERM**  — tín hiệu yêu cầu process hãy dừng lại.
-**SIGKILL** - Tuy nhiên script user có thể bắt được SIGTERM và bỏ qua, thế nên ta thêm SIGKILL để bắt kernel dừng ngay
-Sau khi chương trình thực thi, container bị hủy ngay lập tức
+**SIGTERM**  — a signal to require the process to stop.
+**SIGKILL** - In case of SIGTERM could be catched and ignored by code, SIGKILL appears to kill kernel immediatelly.
 
 #### Result Polling
 
@@ -165,15 +235,14 @@ The client polls `GET /executions/{execution_id}` at a regular interval (1.5 sec
 
 The queue is a Redis **List** (`execution:queue`) used as a FIFO queue via `RPUSH` (enqueue) and `LPOP` (dequeue).
 
-This design was chosen deliberately over message brokers (Kafka, RabbitMQ) for the following reasons:
+This design was chosen over message brokers (Kafka, RabbitMQ) for the following reasons:
 
 - **Simplicity** — Redis is already required for caching and session data. Adding a queue costs zero additional infrastructure.
-- **Sufficiency** — for a single-worker setup, a Redis list provides all necessary semantics: ordering, atomic pop, and persistence (via Redis RDB/AOF).
-- **Observability** — queue depth is a single `LLEN execution:queue` command.
+- **Sufficiency** — for a single worker setup, a Redis list provides all necessities: ordering, atomic pop.
 
-The worker does not use blocking `BLPOP`. Instead, it uses a `@Scheduled` method with a 500ms fixed delay. This is slightly less efficient than blocking pop (wastes one poll cycle when the queue is empty) but is simpler to reason about and integrates cleanly with Spring's scheduling model.
+The worker uses a `@Scheduled` method with a 500ms fixed delay. This is slightly less efficient than blocking pop (wastes one poll cycle when the queue is empty) but is simpler to reason about.
 
-An important constraint of this design: **the job payload in Redis is only the `execution_id`**, not the full job data. The actual source code, language, and metadata are stored in PostgreSQL and fetched by the worker at processing time. This keeps Redis entries small and ensures the database is always the source of truth. If Redis is flushed, jobs that were in-flight can be recovered by scanning for `QUEUED` records in the database.
+An important constraint of this design: **the job payload in Redis is only the `execution_id`**, not the full job data. The actual source code, language, and metadata are stored in PostgreSQL and fetched by the worker at processing time. This keeps Redis entries small and ensures the database is always the source of truth.
 
 <img width="899" height="502" alt="queue" src="https://github.com/user-attachments/assets/adf7d9de-729e-48b6-9542-e015ed58e6c8" />
 
@@ -188,13 +257,13 @@ Every execution record passes through a linear state machine:
                     │         QUEUED               │
                     │  Created by API after commit  │
                     └──────────────┬───────────────┘
-                                   │ Worker picks up
+                                   │ Worker started to execute
                     ┌──────────────▼───────────────┐
                     │         RUNNING              │
                     │  Worker set started_at        │
                     └──────┬───────┬───────┬───────┘
                            │       │       │
-              exit 0/non-0 │  OOM/ │ crash │ timeout
+                   exit 0/ │  OOM  │ crash │ timeout
                     ┌──────▼──┐ ┌──▼───┐ ┌─▼──────┐
                     │COMPLETED│ │FAILED│ │TIMEOUT │
                     └─────────┘ └──────┘ └────────┘
@@ -203,7 +272,7 @@ Every execution record passes through a linear state machine:
                           re-queue to QUEUED
 ```
 
-State transitions are always persisted to the database before the next action. A worker that crashes between setting `RUNNING` and completing the execution will leave the record stuck in `RUNNING`. This is an acknowledged gap — see [Production Readiness Gaps](#production-readiness-gaps).
+State transitions are always persisted to the database before the next action. A worker that crashes between setting `RUNNING` and completing the execution will leave the record stuck in `RUNNING`.
 
 ---
 
@@ -225,9 +294,9 @@ State transitions are always persisted to the database before the next action. A
 
 #### Prevent duplicate execution runs
 
-Each call to `POST /code-sessions/{id}/run` creates a new `CodeExecution` record with a fresh UUID. There is no deduplication based on code content — if the user clicks Run twice, two executions are created and both run. However, a rate limit of 10 executions per session per minute prevents abuse.
+Each call to `POST /code-sessions/{id}/run` creates a new `CodeExecution` record with a fresh UUID. There is no duplication based on code content, if the user clicks Run twice, two executions are created and both run. However, a rate limit of 10 executions per session per minute prevents abuse.
 
-The Redis push only happens once per execution record, inside the `afterCommit()` callback. If the transaction rolls back (e.g. a constraint violation), the push never occurs and no orphaned job exists in Redis.
+The Redis push only happens once per execution record, inside the `afterCommit()` callback. If the transaction rolls back (processing to Postgres somehow corrupted), the push never occurs and no orphaned job exists in Redis.
 
 #### Safe reprocessing of jobs
 
