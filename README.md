@@ -1,9 +1,6 @@
 # LiveCodeExecution---Edtronaut-test
 Building and implementing logic structure and concept of real - time code execution in an isolated and controlled environment
 
-# Code Execution System
-<img width="1431" height="941" alt="architecture (1)" src="https://github.com/user-attachments/assets/d377cfa7-ce38-4121-ac79-1d3bb338c462" />
-
 ## Table of Contents
 
 1. [Introduction](#introduction)
@@ -25,7 +22,7 @@ Building and implementing logic structure and concept of real - time code execut
    - [Failure Handling](#failure-handling)
 7. [Trade-offs](#trade-offs)
    - [Technology Choices and Why](#technology-choices-and-why)
-   - [What You Optimized For](#what-you-optimized-for)
+   - [What You Optimized For](#optimized-this-over-that)
    - [Production Readiness Gaps](#production-readiness-gaps)
 8. [How to run](#how-to-run)
 9. [Demo](#demo)
@@ -118,8 +115,8 @@ API and Worker never talk directly. The database is the only shared state:
 - API writes a `QUEUED` record → pushes execution ID to Redis
 - Worker reads source code from DB → updates status as it progresses
 - API reads final status/output from DB → returns to client
-
 This means if either service restarts mid-execution, no data is lost.
+
 ---
 
 ## Diagram
@@ -131,6 +128,7 @@ This means if either service restarts mid-execution, no data is lost.
 ---
 
 ## Architecture
+<img width="1441" height="1011" alt="architecture (1)" src="https://github.com/user-attachments/assets/e0d8e042-df8c-4349-9280-fb1ff9842812" />
 
 ### End-to-end Request Flow
 
