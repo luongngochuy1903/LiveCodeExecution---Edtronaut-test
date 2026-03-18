@@ -7,8 +7,9 @@ Building and implementing logic structure and concept of real - time code execut
 ## Table of Contents
 
 1. [Introduction](#introduction)
-2. [Diagram](#diagram)
-3. [Architecture](#architecture)
+2. [Database Design](#database-design)
+3. [Diagram](#diagram)
+4. [Architecture](#architecture)
    - [End-to-end Request Flow](#end-to-end-request-flow)
      - [Code Session Creation](#code-session-creation)
      - [Autosave Behavior](#autosave-behavior)
@@ -17,14 +18,15 @@ Building and implementing logic structure and concept of real - time code execut
      - [Result Polling](#result-polling)
    - [Queue-based Execution Design](#queue-based-execution-design)
    - [Execution Lifecycle and State Management](#execution-lifecycle-and-state-management)
-4. [Reliability & Data Model](#reliability--data-model)
+5. [Reliability & Data Model](#reliability--data-model)
    - [Execution States](#execution-states)
    - [Idempotency Handling](#idempotency-handling)
    - [Failure Handling](#failure-handling)
-5. [Trade-offs](#trade-offs)
+6. [Trade-offs](#trade-offs)
    - [Technology Choices and Why](#technology-choices-and-why)
    - [What You Optimized For](#what-you-optimized-for)
    - [Production Readiness Gaps](#production-readiness-gaps)
+7. [How to run](#how-to-run)
 
 ---
 
@@ -370,3 +372,37 @@ A `TIMEOUT` execution has:
 | **No image caching guarantee** | `python:3.12-slim` is not cached, first execution is slow | Pre-pull images in the worker entrypoint (already implemented) and pin image digests to prevent silent updates |
 | **Unbounded session storage** | Sessions and executions accumulate in the database forever | Add a TTL-based cleanup job: Archive or delete old execution records |
 | **Hardcoded limits** | `timeout=10s`, `memory=64m`, `max-retries=3` are global | Make limits configurable per session or per language, stored in the session record |
+
+## How to run
+
+```bash
+# Pull and move to the project first
+git pull https://github.com/luongngochuy1903/LiveCodeExecution---Edtronaut-test.git
+
+cd LiveCodeExecution---Edtronaut-test
+
+# Move to backend source
+cd code-execution-system
+
+# Start Docker container up to booting backend server.
+# Note that the first time built may illustrate errors in ces-worker and ces-api container because of waiting time of these 2 servers for database server might be exceed. The solution is waiting for ces-redis and ces-postgres healthy, then restart ces-worker and ces-api
+docker-compose up --build -d
+
+# ces-api: container for main web api server.
+# ces-worker: container for external worker to consume job from Redis queue.
+# ces-redis: container hosted Redis based-queue - implement message-queue pattern.
+# ces-postgres: container for Postgres database - this is the source of truth.
+
+# Now web api server is running on 8080, worker is running on 8081, check api with http://localhost:8080/swagger-ui.html
+
+#For interacting with UI, comeback to code-editor-frontend folder
+cd ..
+cd code-editor-frontend
+
+# Run installing npm packages
+npm install
+
+# Run project, server is running on http://localhost:3000/
+npm start
+
+```
