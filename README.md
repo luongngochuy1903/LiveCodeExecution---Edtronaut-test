@@ -278,6 +278,8 @@ Every execution record passes through a linear state machine:
 
 State transitions are always persisted to the database before the next action. A worker that crashes between setting `RUNNING` and completing the execution will leave the record stuck in `RUNNING`.
 
+To monitor a specific lifecycle, it is wise to log every status transforming step to terminal.
+
 ---
 
 ## API document
@@ -360,7 +362,7 @@ A `TIMEOUT` execution has:
 | **Queue** | Redis List | popular infrastructure for storing key-value object. Sufficient for one worker throughput. LPOP is atomic — no double-processing risk |
 | **Sandbox** | Docker-in-Docker | Easy way to build without implementing any external tools. Each run gets a fresh container. No language runtime needed in the worker image and easily edited in code |
 
-### What You Optimized For
+### Optimized This Over That
 
 **Simplicity over throughput.** The system is designed to be understandable end-to-end by a single engineer. There are no distributed locks, no complex retry queues, no event sourcing. Every component does one thing and the interaction between components is explicit.
 
