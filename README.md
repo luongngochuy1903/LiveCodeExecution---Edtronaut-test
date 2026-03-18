@@ -412,7 +412,7 @@ cd code-editor-frontend
 npm install
 
 # Run project, server is running on http://localhost:3000/
-npm start
+npm run dev
 
 ```
 
