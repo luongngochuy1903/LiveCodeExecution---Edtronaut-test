@@ -18,16 +18,17 @@ Building and implementing logic structure and concept of real - time code execut
      - [Result Polling](#result-polling)
    - [Queue-based Execution Design](#queue-based-execution-design)
    - [Execution Lifecycle and State Management](#execution-lifecycle-and-state-management)
-5. [Reliability & Data Model](#reliability--data-model)
+5. [API document](#api-document)
+6. [Reliability & Data Model](#reliability--data-model)
    - [Execution States](#execution-states)
    - [Idempotency Handling](#idempotency-handling)
    - [Failure Handling](#failure-handling)
-6. [Trade-offs](#trade-offs)
+7. [Trade-offs](#trade-offs)
    - [Technology Choices and Why](#technology-choices-and-why)
    - [What You Optimized For](#what-you-optimized-for)
    - [Production Readiness Gaps](#production-readiness-gaps)
-7. [How to run](#how-to-run)
-8. [Demo](#demo)
+8. [How to run](#how-to-run)
+9. [Demo](#demo)
 
 ---
 
@@ -278,6 +279,9 @@ Every execution record passes through a linear state machine:
 State transitions are always persisted to the database before the next action. A worker that crashes between setting `RUNNING` and completing the execution will leave the record stuck in `RUNNING`.
 
 ---
+
+## API document
+https://luongngochuy1903.github.io/LiveCodeExecution---Edtronaut-test/
 
 ## Reliability & Data Model
 
