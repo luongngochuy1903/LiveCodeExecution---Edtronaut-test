@@ -27,6 +27,7 @@ Building and implementing logic structure and concept of real - time code execut
    - [What You Optimized For](#what-you-optimized-for)
    - [Production Readiness Gaps](#production-readiness-gaps)
 7. [How to run](#how-to-run)
+8. [Demo](#demo)
 
 ---
 
@@ -373,6 +374,8 @@ A `TIMEOUT` execution has:
 | **Unbounded session storage** | Sessions and executions accumulate in the database forever | Add a TTL-based cleanup job: Archive or delete old execution records |
 | **Hardcoded limits** | `timeout=10s`, `memory=64m`, `max-retries=3` are global | Make limits configurable per session or per language, stored in the session record |
 
+---
+
 ## How to run
 
 ```bash
@@ -406,3 +409,12 @@ npm install
 npm start
 
 ```
+
+---
+## Demo
+The basic UI when first opening code editor:
+<img width="1919" height="869" alt="image" src="https://github.com/user-attachments/assets/2785591e-3b37-4b24-95c8-2c55199b8b25" />
+
+Assume that we are going to run a Python script. Let see the result:
+<img width="1919" height="869" alt="image" src="https://github.com/user-attachments/assets/0dc63f5b-5723-4367-964f-b3140d52fccc" />
+
