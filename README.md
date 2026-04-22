@@ -1,9 +1,6 @@
 # LiveCodeExecution---Edtronaut-test
 Building and implementing logic structure and concept of real - time code execution in an isolated and controlled environment
 
-# Code Execution System
-<img width="1431" height="941" alt="architecture (1)" src="https://github.com/user-attachments/assets/d377cfa7-ce38-4121-ac79-1d3bb338c462" />
-
 ## Table of Contents
 
 1. [Introduction](#introduction)
@@ -18,15 +15,17 @@ Building and implementing logic structure and concept of real - time code execut
      - [Result Polling](#result-polling)
    - [Queue-based Execution Design](#queue-based-execution-design)
    - [Execution Lifecycle and State Management](#execution-lifecycle-and-state-management)
-5. [Reliability & Data Model](#reliability--data-model)
+5. [API document](#api-document)
+6. [Reliability & Data Model](#reliability--data-model)
    - [Execution States](#execution-states)
    - [Idempotency Handling](#idempotency-handling)
    - [Failure Handling](#failure-handling)
-6. [Trade-offs](#trade-offs)
+7. [Trade-offs](#trade-offs)
    - [Technology Choices and Why](#technology-choices-and-why)
-   - [What You Optimized For](#what-you-optimized-for)
+   - [What You Optimized For](#optimized-this-over-that)
    - [Production Readiness Gaps](#production-readiness-gaps)
-7. [How to run](#how-to-run)
+8. [How to run](#how-to-run)
+9. [Demo](#demo)
 
 ---
 
@@ -116,8 +115,8 @@ API and Worker never talk directly. The database is the only shared state:
 - API writes a `QUEUED` record → pushes execution ID to Redis
 - Worker reads source code from DB → updates status as it progresses
 - API reads final status/output from DB → returns to client
-
 This means if either service restarts mid-execution, no data is lost.
+
 ---
 
 ## Diagram
@@ -129,6 +128,7 @@ This means if either service restarts mid-execution, no data is lost.
 ---
 
 ## Architecture
+<img width="1441" height="1011" alt="architecture (1)" src="https://github.com/user-attachments/assets/e0d8e042-df8c-4349-9280-fb1ff9842812" />
 
 ### End-to-end Request Flow
 
@@ -276,7 +276,12 @@ Every execution record passes through a linear state machine:
 
 State transitions are always persisted to the database before the next action. A worker that crashes between setting `RUNNING` and completing the execution will leave the record stuck in `RUNNING`.
 
+To monitor a specific lifecycle, it is wise to log every status transforming step to terminal.
+
 ---
+
+## API document
+https://luongngochuy1903.github.io/LiveCodeExecution---Edtronaut-test/
 
 ## Reliability & Data Model
 
@@ -355,7 +360,7 @@ A `TIMEOUT` execution has:
 | **Queue** | Redis List | popular infrastructure for storing key-value object. Sufficient for one worker throughput. LPOP is atomic — no double-processing risk |
 | **Sandbox** | Docker-in-Docker | Easy way to build without implementing any external tools. Each run gets a fresh container. No language runtime needed in the worker image and easily edited in code |
 
-### What You Optimized For
+### Optimized This Over That
 
 **Simplicity over throughput.** The system is designed to be understandable end-to-end by a single engineer. There are no distributed locks, no complex retry queues, no event sourcing. Every component does one thing and the interaction between components is explicit.
 
@@ -372,6 +377,8 @@ A `TIMEOUT` execution has:
 | **No image caching guarantee** | `python:3.12-slim` is not cached, first execution is slow | Pre-pull images in the worker entrypoint (already implemented) and pin image digests to prevent silent updates |
 | **Unbounded session storage** | Sessions and executions accumulate in the database forever | Add a TTL-based cleanup job: Archive or delete old execution records |
 | **Hardcoded limits** | `timeout=10s`, `memory=64m`, `max-retries=3` are global | Make limits configurable per session or per language, stored in the session record |
+
+---
 
 ## How to run
 
@@ -403,6 +410,15 @@ cd code-editor-frontend
 npm install
 
 # Run project, server is running on http://localhost:3000/
-npm start
+npm run dev
 
 ```
+
+---
+## Demo
+The basic UI when first opening code editor:
+<img width="1919" height="869" alt="image" src="https://github.com/user-attachments/assets/2785591e-3b37-4b24-95c8-2c55199b8b25" />
+
+Assume that we are going to run a Python script. Let see the result:
+<img width="1919" height="869" alt="image" src="https://github.com/user-attachments/assets/0dc63f5b-5723-4367-964f-b3140d52fccc" />
+
